@@ -129,13 +129,12 @@ if __name__ == '__main__':
     balance = fetch_balance(api)
     print(f"Available trading balance: {balance} {base_currency}")
 
-    auto_close = (input("Do you want to auto close the position [Y/n]: ") or "Y").upper()
-    if auto_close == "Y":
-        max_dr_down = input("What is the maximum draw-down % for this position [98%]: ")
-        if max_dr_down:
-            position = Position(api, base_currency, auto_close=(auto_close == "Y"), max_dr_down=int(max_dr_down))
-        else:
-            position = Position(api, base_currency, auto_close=(auto_close == "Y"))
+    auto_close = bool(os.getenv("AUTO_CLOSE"))
+    if auto_close:
+        max_dr_down = int(os.getenv("CLOSING_DRAW_DOWN"))
+        position = Position(api, base_currency, auto_close=auto_close, max_dr_down=max_dr_down)
+    else:
+        position = Position(api, base_currency, auto_close=auto_close)
 
     ticker_list = list()
     ticker_file_count = 0

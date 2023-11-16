@@ -7,6 +7,8 @@ Before running create a `.env` file with the following keys.
     API_SECRET=
     PASSWORD=
     BASE_CURRENCY=
+    AUTO_CLOSE=True
+    CLOSING_DRAW_DOWN=98
 
 Base currency is the coin which you want to use to fund your trades.
 
