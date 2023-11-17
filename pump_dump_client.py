@@ -64,9 +64,9 @@ class Position:
         self.symbol = f'{self.coin}-{self.base_currency}'
         ticker = self.exchange.fetch_ticker(symbol=self.symbol)
         last_bid = ticker['bid']
-        open_order = api.create_market_buy_order(self.symbol, amount=self.cost * (1 / last_bid))
+        open_order = self.exchange.create_market_buy_order(self.symbol, amount=self.cost * (1 / last_bid))
         self.is_open = True
-        open_order = api.fetch_order(open_order['id'], self.symbol)
+        open_order = self.exchange.fetch_order(open_order['id'], self.symbol)
         self.order_list.append(open_order)
         self.opening_price = float(open_order['price'])
         self.size = float(open_order['filled'])
