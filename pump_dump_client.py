@@ -9,9 +9,8 @@ import pandas as pd
 from datetime import date
 import os
 from dotenv import load_dotenv
-
-# TODO
-#  Integrate into streamlit
+import streamlit as st
+from schedule import every, repeat, run_pending
 
 
 def provision_kucoin_spot_connection(verbose=False):
@@ -25,7 +24,7 @@ def provision_kucoin_spot_connection(verbose=False):
     return exchange
 
 
-def persist_tickers(t_list, num):
+def persist_tickers(t_list, num, coin):
     with open(f'{coin}_{date.today().strftime("%m_%d_%Y")}_ticks_{num:03}.json', 'w') as ticks_file:
         ticks_file.write(json.dumps(t_list))
     num += 1
@@ -111,67 +110,95 @@ class Position:
 
 
 def fetch_balance(exchange):
-    accounts = exchange.fetch_accounts(params={'type': 'trade', 'currency': base_currency})
-    return float(accounts[0]['info']['available'])
+    accounts = exchange.fetch_accounts(params={'type': 'trade', 'currency': st.session_state.base_currency})
+    return float(accounts[0]['info']['available']) / 10
 
 
-if __name__ == '__main__':
+def create_position(balance, coin):
+    st.session_state.ticket_list.append(position.open(balance, coin))
+
+    st.session_state.pump_df = pd.DataFrame(
+        columns=['coin', 'pos_quote', 'pos_base', 'last_ask', 'last_price', 'u_pnl'])
+
+
+def setup():
     # Run configuration
     load_dotenv()
-    base_currency = os.getenv('BASE_CURRENCY')
+    st.session_state.api = provision_kucoin_spot_connection()
 
-    print('Start')
-    print('python', sys.version)
-    print('CCXT Version:', ccxt.__version__)
-    api = provision_kucoin_spot_connection()
+    st.session_state.base_currency = os.getenv('BASE_CURRENCY')
+    tradeable_coins = list(
+        map(lambda s: s.split('-')[0],
+            filter(lambda s: st.session_state.base_currency in s,
+                   map(lambda s: s['name'],
+                       st.session_state.api.public_get_symbols()['data']))))
 
     # Fetch account balance
-    balance = fetch_balance(api)
-    print(f"Available trading balance: {balance} {base_currency}")
+    balance = fetch_balance(st.session_state.api)
+    st.text(f'python {sys.version}')
+    st.text(f'CCXT Version: {ccxt.__version__}')
+    st.text(f"Available trading balance: {balance} {st.session_state.base_currency}")
 
     auto_close = bool(os.getenv("AUTO_CLOSE"))
     if auto_close:
         max_dr_down = int(os.getenv("CLOSING_DRAW_DOWN"))
-        position = Position(api, base_currency, auto_close=auto_close, max_dr_down=max_dr_down)
+        st.session_state.position = Position(st.session_state.api, st.session_state.base_currency,
+                                             auto_close=auto_close, max_dr_down=max_dr_down)
     else:
-        position = Position(api, base_currency, auto_close=auto_close)
+        st.session_state.position = Position(st.session_state.api, st.session_state.base_currency,
+                                             auto_close=auto_close)
 
-    ticker_list = list()
-    ticker_file_count = 0
-    # Sit and wait for coin [prompt]
-    coin = input("Pumped Coin: ")
+    st.session_state.ticker_list = list()
+    st.session_state.ticker_file_count = 0
 
-    ticker_list.append(position.open(balance, coin))
+    coin = st.sidebar.selectbox('Coin of interest: ', options=tradeable_coins)
+    st.sidebar.button("Start", on_click=create_position, args=(balance, coin))
+    st.sidebar.button("Stop", on_click=close_position)
 
-    pump_df = pd.DataFrame(
-        columns=['coin', 'pos_quote', 'pos_base', 'last_ask', 'last_price', 'u_pnl'])
 
-    try:
-        while True:
-            ticker = api.fetch_ticker(symbol=position.symbol)
+def evaluate_position():
+    if st.session_state.position.is_open:
+        ticker = st.session_state.api.fetch_ticker(symbol=st.session_state.position.symbol)
 
-            position.evaluate(ticker)
-            print(position)
+        st.session_state.position.evaluate(ticker)
+        st.session_state.position_display = st.session_state.position.__str__()
+        st.text_area("position", key='position_display')
 
-            ticker_list.append(ticker)
-            if len(ticker_list) > 1000:
-                ticker_file_count = persist_tickers(ticker_list, ticker_file_count)
-                ticker_list = list()
+        st.session_state.ticker_list.append(ticker)
+        if len(st.session_state.ticker_list) > 1000:
+            st.session_state.ticker_file_count = persist_tickers(st.session_state.ticker_list,
+                                                                 st.session_state.ticker_file_count,
+                                                                 st.session_state.position.coin)
+            st.session_state.ticker_list = list()
 
-            pump_df.loc[len(pump_df)] = [coin, position.size, position.last_valuation, position.last_ticker['ask'],
-                                         position.last_ticker['last'], position.pnl]
+        st.session_state.pump_df.loc[len(st.session_state.pump_df)] = [st.session_state.position.coin,
+                                                                       st.session_state.position.size,
+                                                                       st.session_state.position.last_valuation,
+                                                                       st.session_state.position.last_ticker['ask'],
+                                                                       st.session_state.position.last_ticker['last'],
+                                                                       st.session_state.position.pnl]
 
-            time.sleep(0.7)
-    except KeyboardInterrupt:
-        if position.is_open:
-            close = input("Close position: [Y/n] : ") or "Y"
-            if close == "Y":
-                position.close()
-            else:
-                print(f"Keeping position open. Close it on the web: https://www.kucoin.com/trade/{symbol}")
 
-    print("End")
-    pump_df.to_csv(f'{coin}_{date.today().strftime("%m_%d_%Y")}.csv', index=False)
-    with open(f'{coin}_{date.today().strftime("%m_%d_%Y")}_orders.json', 'w') as order_file:
-        order_file.write(json.dumps(position.order_list))
-    ticker_file_count = persist_tickers(ticker_list, ticker_file_count)
+def close_position():
+    if st.session_state.position.is_open:
+        st.session_state.position.close()
+
+    st.session_state.pump_df.to_csv(f'{st.session_state.position.coin}_{date.today().strftime("%m_%d_%Y")}.csv',
+                                    index=False)
+    with open(f'{st.session_state.position.coin}_{date.today().strftime("%m_%d_%Y")}_orders.json', 'w') as order_file:
+        order_file.write(json.dumps(st.session_state.position.order_list))
+    ticker_file_count = persist_tickers(st.session_state.ticker_list, st.session_state.ticker_file_count,
+                                        st.session_state.position.coin)
+
+
+st.title("KuCoin pump and dump client")
+setup()
+with st.empty():
+    @repeat(every(1).seconds)
+    def refresh_data():
+        evaluate_position()
+
+
+    while True:
+        run_pending()
+        time.sleep(1)
