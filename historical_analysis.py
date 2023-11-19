@@ -15,9 +15,9 @@ import pytz
 def provision_kucoin_spot_connection(verbose=False):
     exchange = ccxt.kucoin({
         'adjustForTimeDifference': True,
-        "apiKey": os.getenv("API_KEY"),
-        "secret": os.getenv("API_SECRET"),
-        'password': os.getenv("PASSWORD"),
+        "apiKey": os.getenv("API_KEY") or st.secrets.API_KEY,
+        "secret": os.getenv("API_SECRET") or st.secrets.API_SECRET,
+        'password': os.getenv("PASSWORD") or st.secrets.PASSWORD,
     })
     exchange.verbose = verbose
     return exchange
@@ -28,13 +28,14 @@ def load_historical_file(file_name):
 
 
 @st.cache_data
-def fetch_candlesticks(_api, coin, time, length=30):
+def fetch_candlesticks(_api, coin, time, minutes_before=10, minutes_after=10):
     """Method fetching the candlesticks around the time of the pump"""
 
     try:
-        data = _api.fetch_ohlcv(f'{coin}-USDT',
-                                since=int(time.values[0].astype('datetime64[s]').astype('int')) * 1000,
-                                limit=length)
+        since = int(time.values[0].astype('datetime64[s]').astype('int') - minutes_before * 60) * 1000
+        data = _api.fetch_ohlcv(f'{coin}-{os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY}',
+                                since=since,
+                                limit=minutes_before+minutes_after+1)
         data_pd = pd.DataFrame(data, columns=['unix', 'open', 'high', 'low', 'close', 'volume'])
         data_pd['date'] = pd.to_datetime(data_pd['unix'].apply(lambda it: it / 1000),
                                          unit='s')  # add a human readable date
@@ -42,6 +43,19 @@ def fetch_candlesticks(_api, coin, time, length=30):
     except BadSymbol:
         st.error(f"No Symbol {coin}-USDT, Coin de-listed?")
         return None
+
+
+@st.cache_data
+def fetch_history(_api, coin, time, days):
+    since = int(time.values[0].astype('datetime64[s]').astype('int') - days * 3600 * 24) * 1000
+    data = _api.fetch_ohlcv(f'{coin}-{os.getenv("BASE_CURRENCY")}',
+                            timeframe='1d',
+                            since=since,
+                            limit=days)
+    data_pd = pd.DataFrame(data, columns=['unix', 'open', 'high', 'low', 'close', 'volume'])
+    data_pd['date'] = pd.to_datetime(data_pd['unix'].apply(lambda it: it / 1000),
+                                         unit='s')
+    return data_pd
 
 
 def to_utc(time, local=pytz.timezone("Europe/Paris")):
@@ -57,7 +71,7 @@ kucoin = provision_kucoin_spot_connection()
 pumps_df = load_historical_file('pumps.csv')
 pumps_df['Date'] = (pd.to_datetime(pumps_df['Date']
                                    .apply(lambda it: it.replace('[', '').replace(']', '')))
-                    .apply(lambda it: it.replace(hour=17, minute=50))
+                    .apply(lambda it: it.replace(hour=18, minute=00))
                     .apply(to_utc))
 
 # st.dataframe(pumps_df, hide_index=True)
@@ -66,8 +80,13 @@ pumped_coins = pumps_df['Coin'].to_list()
 
 current_coin = st.sidebar.selectbox("Event of interest", options=pumped_coins)
 pump_time = pumps_df[pumps_df['Coin'] == current_coin]['Date']
+st.sidebar.markdown("---")
+pre_minutes = st.sidebar.slider("Minutes before pump: ", min_value=0, max_value=60, value=5)
+post_minutes = st.sidebar.slider("Minutes after pump: ", min_value=0, max_value=60, value=5)
+st.sidebar.markdown("---")
+hist_days = st.sidebar.slider("Days before pump:", min_value=1, max_value=365,value=60)
 
-pump_data = fetch_candlesticks(kucoin, current_coin, pump_time)
+pump_data = fetch_candlesticks(kucoin, current_coin, pump_time, pre_minutes, post_minutes)
 
 if pump_data is not None:
     st.text(f"Pump on {current_coin} @ {np.datetime_as_string(pump_time.values[0])[:16]} UTC")
@@ -104,3 +123,18 @@ if pump_data is not None:
     })
 
     st.dataframe(pump_agg)
+    st.text(f"Price delta: {pump_agg.loc['max']['high'] - pump_agg.loc['min']['low']}")
+    st.text(f"Max PNL: {500 / pump_agg.loc['min']['low'] * pump_agg.loc['max']['high'] - 500 :.3f} ")
+
+    st.text("Coin metrics")
+    hist_data = fetch_history(kucoin, current_coin, pump_time, hist_days)
+    hist_agg = hist_data.agg({
+        "open": ['min', 'max', 'median'],
+        "close": ['min', 'max', 'median'],
+        "high": ['min', 'max', 'median'],
+        "low": ['min', 'max', 'median'],
+        "volume": ['min', 'max', 'median'],
+    })
+    st.dataframe(hist_agg)
+
+
