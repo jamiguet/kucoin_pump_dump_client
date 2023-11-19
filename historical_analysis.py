@@ -6,9 +6,9 @@ import ccxt
 from ccxt.kucoin import BadSymbol
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
-from datetime import datetime
 import numpy as np
 import pytz
+from pycoingecko import CoinGeckoAPI
 
 
 @st.cache_resource
@@ -35,7 +35,7 @@ def fetch_candlesticks(_api, coin, time, minutes_before=10, minutes_after=10):
         since = int(time.values[0].astype('datetime64[s]').astype('int') - minutes_before * 60) * 1000
         data = _api.fetch_ohlcv(f'{coin}-{os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY}',
                                 since=since,
-                                limit=minutes_before+minutes_after+1)
+                                limit=minutes_before + minutes_after + 1)
         data_pd = pd.DataFrame(data, columns=['unix', 'open', 'high', 'low', 'close', 'volume'])
         data_pd['date'] = pd.to_datetime(data_pd['unix'].apply(lambda it: it / 1000),
                                          unit='s')  # add a human readable date
@@ -48,13 +48,15 @@ def fetch_candlesticks(_api, coin, time, minutes_before=10, minutes_after=10):
 @st.cache_data
 def fetch_history(_api, coin, time, days):
     since = int(time.values[0].astype('datetime64[s]').astype('int') - days * 3600 * 24) * 1000
-    data = _api.fetch_ohlcv(f'{coin}-{os.getenv("BASE_CURRENCY")}',
+    data = _api.fetch_ohlcv(f'{coin}-{os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY}',
                             timeframe='1d',
-                            since=since,
+                            since=since - 24 * 3600 * 1000,  # one day earlier so that dont have the pump in the stats
                             limit=days)
     data_pd = pd.DataFrame(data, columns=['unix', 'open', 'high', 'low', 'close', 'volume'])
     data_pd['date'] = pd.to_datetime(data_pd['unix'].apply(lambda it: it / 1000),
-                                         unit='s')
+                                     unit='s')
+    data_pd['v_hour'] = data_pd['volume'] / 24
+    data_pd['v_minute'] = data_pd['volume'] / 24 / 60
     return data_pd
 
 
@@ -84,7 +86,7 @@ st.sidebar.markdown("---")
 pre_minutes = st.sidebar.slider("Minutes before pump: ", min_value=0, max_value=60, value=5)
 post_minutes = st.sidebar.slider("Minutes after pump: ", min_value=0, max_value=60, value=5)
 st.sidebar.markdown("---")
-hist_days = st.sidebar.slider("Days before pump:", min_value=1, max_value=365,value=60)
+hist_days = st.sidebar.slider("Days before pump:", min_value=1, max_value=365, value=60)
 
 pump_data = fetch_candlesticks(kucoin, current_coin, pump_time, pre_minutes, post_minutes)
 
@@ -134,7 +136,15 @@ if pump_data is not None:
         "high": ['min', 'max', 'median'],
         "low": ['min', 'max', 'median'],
         "volume": ['min', 'max', 'median'],
+        "v_hour": ['min', 'max', 'median'],
+        "v_minute": ['min', 'max', 'median']
     })
     st.dataframe(hist_agg)
 
+    st.text(f"Volume in previous {hist_days} days")
+    vol_evol = make_subplots(rows=2, cols=1, shared_xaxes=True,
+                             vertical_spacing=0.03, subplot_titles=('Trading volume', 'minute'))
+    vol_evol.add_trace(go.Bar(x=hist_data['date'], y=hist_data['v_hour'], name='Hour'), row=1, col=1, )
 
+    vol_evol.add_trace(go.Bar(x=hist_data['date'], y=hist_data['v_minute'], name='Minute'), row=2, col=1)
+    st.plotly_chart(vol_evol)
