@@ -40,15 +40,14 @@ def fetch_candlesticks(_api, coin, time, minutes_before=10, minutes_after=10):
                                          unit='s')  # add a human readable date
         return data_pd
     except BadSymbol:
-        st.error(f"No Symbol {coin}-USDT, Coin de-listed?")
+        st.error(f"No Symbol {coin}-{st.session_state.base_coin}, Coin de-listed?")
         return None
 
 
 @st.cache_data
 def fetch_history(_api, coin, time, days):
     since = int(time.values[0].astype('datetime64[s]').astype('int') - days * 3600 * 24) * 1000
-    currency = os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY
-    data = _api.fetch_ohlcv(f'{coin}-{currency}',
+    data = _api.fetch_ohlcv(f'{coin}-{st.session_state.base_coin}',
                             timeframe='1d',
                             since=since - 24 * 3600 * 1000,  # one day earlier so that dont have the pump in the stats
                             limit=days)
@@ -88,8 +87,8 @@ post_minutes = st.sidebar.slider("Minutes after pump: ", min_value=0, max_value=
 st.sidebar.markdown("---")
 hist_days = st.sidebar.slider("Days before pump:", min_value=1, max_value=365, value=60)
 st.sidebar.markdown("---")
-currency = os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY
-pumped_amount = int(st.sidebar.text_input(f"Pumped amount ({currency}):", value=500))
+st.session_state.base_coin = os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY
+pumped_amount = int(st.sidebar.text_input(f"Pumped amount ({st.session_state.base_coin}):", value=500))
 
 pump_data = fetch_candlesticks(kucoin, current_coin, pump_time, pre_minutes, post_minutes)
 
@@ -129,7 +128,9 @@ if pump_data is not None:
 
     st.dataframe(pump_agg)
     st.text(f"Price delta: {pump_agg.loc['max']['high'] - pump_agg.loc['min']['low']}")
-    st.text(f"Max PNL: {pumped_amount / pump_agg.loc['min']['low'] * pump_agg.loc['max']['high'] - pumped_amount :.3f} ")
+    st.text(
+        f"Max PNL: {pumped_amount / pump_agg.loc['min']['low'] * pump_agg.loc['max']['high'] - pumped_amount :.3f} "
+        f" {st.session_state.base_coin}")
 
     st.text("Coin metrics")
     hist_data = fetch_history(kucoin, current_coin, pump_time, hist_days)
@@ -138,9 +139,10 @@ if pump_data is not None:
         "close": ['min', 'max', 'median'],
         "high": ['min', 'max', 'median'],
         "low": ['min', 'max', 'median'],
-        "volume": ['min', 'max', 'median'],
+        "volume": ['min', 'max', 'median', 'sum'],
         "v_hour": ['min', 'max', 'median'],
-        "v_minute": ['min', 'max', 'median']
+        "v_minute": ['min', 'max', 'median'],
+
     })
     st.dataframe(hist_agg)
 
