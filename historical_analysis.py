@@ -8,7 +8,6 @@ import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import numpy as np
 import pytz
-from pycoingecko import CoinGeckoAPI
 
 
 @st.cache_resource
