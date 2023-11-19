@@ -47,7 +47,8 @@ def fetch_candlesticks(_api, coin, time, minutes_before=10, minutes_after=10):
 @st.cache_data
 def fetch_history(_api, coin, time, days):
     since = int(time.values[0].astype('datetime64[s]').astype('int') - days * 3600 * 24) * 1000
-    data = _api.fetch_ohlcv(f'{coin}-{os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY}',
+    currency = os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY
+    data = _api.fetch_ohlcv(f'{coin}-{currency}',
                             timeframe='1d',
                             since=since - 24 * 3600 * 1000,  # one day earlier so that dont have the pump in the stats
                             limit=days)
@@ -83,9 +84,12 @@ current_coin = st.sidebar.selectbox("Event of interest", options=pumped_coins)
 pump_time = pumps_df[pumps_df['Coin'] == current_coin]['Date']
 st.sidebar.markdown("---")
 pre_minutes = st.sidebar.slider("Minutes before pump: ", min_value=0, max_value=60, value=5)
-post_minutes = st.sidebar.slider("Minutes after pump: ", min_value=0, max_value=60, value=5)
+post_minutes = st.sidebar.slider("Minutes after pump: ", min_value=0, max_value=60, value=30)
 st.sidebar.markdown("---")
 hist_days = st.sidebar.slider("Days before pump:", min_value=1, max_value=365, value=60)
+st.sidebar.markdown("---")
+currency = os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY
+pumped_amount = int(st.sidebar.text_input(f"Pumped amount ({currency}):", value=500))
 
 pump_data = fetch_candlesticks(kucoin, current_coin, pump_time, pre_minutes, post_minutes)
 
@@ -125,7 +129,7 @@ if pump_data is not None:
 
     st.dataframe(pump_agg)
     st.text(f"Price delta: {pump_agg.loc['max']['high'] - pump_agg.loc['min']['low']}")
-    st.text(f"Max PNL: {500 / pump_agg.loc['min']['low'] * pump_agg.loc['max']['high'] - 500 :.3f} ")
+    st.text(f"Max PNL: {pumped_amount / pump_agg.loc['min']['low'] * pump_agg.loc['max']['high'] - pumped_amount :.3f} ")
 
     st.text("Coin metrics")
     hist_data = fetch_history(kucoin, current_coin, pump_time, hist_days)
