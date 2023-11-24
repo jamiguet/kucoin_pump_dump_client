@@ -72,7 +72,7 @@ class Position:
         self.size = float(open_order['filled'])
         self.fees += reduce(lambda acc, val: acc + float(val['cost']), open_order['fees'], 0.0)
 
-        print(f"Market order @ {self.opening_price} got {self.size} {self.coin} ")
+        print(f"Market order @ {self.opening_price} got {self.size} {self.coin} T: [{open_order['datetime']}]")
         return ticker
 
     def evaluate(self, ticker):
@@ -127,7 +127,7 @@ if __name__ == '__main__':
 
     # Fetch account balance
     balance = fetch_balance(api)
-    print(f"Available trading balance: {balance} {base_currency}")
+    print(f"Available trading balance: {balance:.3f} {base_currency}")
 
     auto_close = bool(os.getenv("AUTO_CLOSE"))
     if auto_close:
@@ -143,8 +143,10 @@ if __name__ == '__main__':
 
     ticker_list.append(position.open(balance, coin))
 
+    print(f"Check the action @ https://www.kucoin.com/trade/{position.symbol}")
+
     pump_df = pd.DataFrame(
-        columns=['coin', 'pos_quote', 'pos_base', 'last_ask', 'last_price', 'u_pnl'])
+        columns=['coin', 'pos_quote', 'pos_base', 'last_ask', 'last_price', 'u_pnl', 'unix'])
 
     try:
         while True:
@@ -159,7 +161,7 @@ if __name__ == '__main__':
                 ticker_list = list()
 
             pump_df.loc[len(pump_df)] = [coin, position.size, position.last_valuation, position.last_ticker['ask'],
-                                         position.last_ticker['last'], position.pnl]
+                                         position.last_ticker['last'], position.pnl, position.last_ticker['time']]
 
             time.sleep(0.7)
     except KeyboardInterrupt:
@@ -168,7 +170,7 @@ if __name__ == '__main__':
             if close == "Y":
                 position.close()
             else:
-                print(f"Keeping position open. Close it on the web: https://www.kucoin.com/trade/{symbol}")
+                print(f"Keeping position open. Close it on the web: https://www.kucoin.com/trade/{position.symbol}")
 
     print("End")
     pump_df.to_csv(f'{coin}_{date.today().strftime("%m_%d_%Y")}.csv', index=False)

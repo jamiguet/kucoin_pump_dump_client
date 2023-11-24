@@ -22,8 +22,15 @@ def provision_kucoin_spot_connection(verbose=False):
     return exchange
 
 
+@st.cache_data
 def load_historical_file(file_name):
-    return pd.read_csv(file_name)
+    # TODO adapt hour and minute to be read from csv
+    pump_events = pd.read_csv(file_name)
+    pump_events['Date'] = (pd.to_datetime(pump_events['Date']
+                                          .apply(lambda it: it.replace('[', '').replace(']', '')))
+                           .apply(lambda it: it.replace(hour=18, minute=00))
+                           .apply(to_utc))
+    return pump_events
 
 
 @st.cache_data
@@ -64,16 +71,36 @@ def to_utc(time, local=pytz.timezone("Europe/Paris")):
     return local_dt.astimezone(pytz.utc)
 
 
+@st.cache_data
+def compute_pump(_api, coin, time, pre, post):
+    pump_data = fetch_candlesticks(_api, coin, time, pre, post)
+
+    if pump_data is not None:
+        current = kucoin.fetch_ticker(symbol=f'{coin}-{os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY}')
+        pump_agg = pump_data.agg({
+            "open": ['min', 'max', 'median'],
+            "close": ['min', 'max', 'median'],
+            "high": ['min', 'max', 'median'],
+            "low": ['min', 'max', 'median'],
+            "volume": ['min', 'max', 'median', 'sum'],
+        })
+
+        max_volume = pump_agg.loc['max']['volume']
+        max_volume_valued = max_volume * current['last']
+        total_volume = pump_agg.loc['sum']['volume']
+        pump_factor = pump_agg.loc['max']['high'] / pump_agg.loc['min']['low'] - 1
+        start = pump_agg.loc['min']['low']
+        return coin, pump_factor, max_volume, total_volume, start, max_volume_valued
+    else:
+        return None, 0, 0, 0, 0, 0
+
+
 load_dotenv()
 
 st.title("Historical Pump and Dump event analysis")
 
 kucoin = provision_kucoin_spot_connection()
-pumps_df = load_historical_file('pumps.csv')
-pumps_df['Date'] = (pd.to_datetime(pumps_df['Date']
-                                   .apply(lambda it: it.replace('[', '').replace(']', '')))
-                    .apply(lambda it: it.replace(hour=18, minute=00))
-                    .apply(to_utc))
+pumps_df = load_historical_file('./pumps.csv')
 
 # st.dataframe(pumps_df, hide_index=True)
 
@@ -128,9 +155,10 @@ if pump_data is not None:
 
     st.dataframe(pump_agg)
     st.text(f"Price delta: {pump_agg.loc['max']['high'] - pump_agg.loc['min']['low']}")
-    st.text(
-        f"Max PNL: {pumped_amount / pump_agg.loc['min']['low'] * pump_agg.loc['max']['high'] - pumped_amount :.3f} "
-        f" {st.session_state.base_coin}")
+    max_pnl = pumped_amount / pump_agg.loc['min']['low'] * pump_agg.loc['max']['high'] - pumped_amount
+    st.text(f"Max PNL: {max_pnl :.3f} {st.session_state.base_coin}"
+            f"\nPump ratio: {max_pnl / pumped_amount:.2%}")
+    st.text(f"Pump factor: {pump_agg.loc['max']['high'] / pump_agg.loc['min']['low'] - 1 :.2f}")
 
     st.text("Coin metrics")
     hist_data = fetch_history(kucoin, current_coin, pump_time, hist_days)
@@ -153,3 +181,19 @@ if pump_data is not None:
 
     vol_evol.add_trace(go.Bar(x=hist_data['date'], y=hist_data['v_minute'], name='Minute'), row=2, col=1)
     st.plotly_chart(vol_evol)
+
+summary = st.sidebar.checkbox('Display Summary', value=False)
+
+if summary:
+    st.text("Pump summary")
+    # coin, pump_factor, max_volume, pump_agg['min']['low']
+    summary_df = pd.DataFrame(
+        columns=['pump', 'factor', 'max_volume', 'total_volume', 'start_price', 'max_volume_valued'])
+    for coi in pumps_df['Coin']:
+        pump_time = pumps_df[pumps_df['Coin'] == coi]['Date']
+        coin, factor, max_v, total_v, start_price, max_vol_val = compute_pump(kucoin, coi, pump_time, pre_minutes,
+                                                                              post_minutes)
+        if coin:
+            summary_df.loc[len(summary_df)] = [coin, factor, max_v, total_v, start_price, max_vol_val]
+
+    st.dataframe(summary_df, use_container_width=True)
