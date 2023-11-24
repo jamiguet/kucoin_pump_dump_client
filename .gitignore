@@ -1,4 +1,4 @@
 .idea
 .env
 *.json
-*.csv
+/previous_pumps
