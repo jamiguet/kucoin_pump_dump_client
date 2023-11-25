@@ -24,11 +24,8 @@ def provision_kucoin_spot_connection(verbose=False):
 
 @st.cache_data
 def load_historical_file(file_name):
-    # TODO adapt hour and minute to be read from csv
     pump_events = pd.read_csv(file_name)
-    pump_events['Date'] = (pd.to_datetime(pump_events['Date']
-                                          .apply(lambda it: it.replace('[', '').replace(']', '')))
-                           .apply(lambda it: it.replace(hour=18, minute=00))
+    pump_events['Date'] = (pd.to_datetime(pump_events['Date'], format='[%Y-%m-%d %a  %H:%M]')
                            .apply(to_utc))
     return pump_events
 
