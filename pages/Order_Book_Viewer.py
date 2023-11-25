@@ -253,7 +253,8 @@ if show_ask:
     fig2.update_xaxes(title_text='index')
     st.plotly_chart(fig2)
 
-    fig4 = px.line(data_frame=full_asks, x='factor', y='csum_base_volume', title='Base volume by factor')
+    fig4 = px.line(data_frame=full_asks, x='factor', y='csum_base_volume', title='Base volume by factor',
+                   hover_name='price')
     fig4.add_hline(y=pump_volume, line_color='red')
     st.plotly_chart(fig4)
 
