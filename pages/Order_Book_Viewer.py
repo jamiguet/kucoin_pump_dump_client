@@ -1,5 +1,4 @@
 import datetime
-import json
 import time
 from functools import reduce
 import streamlit as st
@@ -11,7 +10,6 @@ from ccxt.kucoin import BadSymbol
 import plotly.graph_objects as go
 from plotly.subplots import make_subplots
 import plotly.express as px
-import numpy as np
 import pytz
 
 
@@ -26,11 +24,9 @@ def provision_kucoin_spot_connection(verbose=False):
     exchange.verbose = verbose
     return exchange
 
-
 @st.cache_data
 def fetch_candlesticks(_api, coin, time, minutes_before=10, minutes_after=10):
     """Method fetching the candlesticks around the time of the pump"""
-
     try:
         since = int(time.values[0].astype('datetime64[s]').astype('int') - minutes_before * 60) * 1000
         data = _api.fetch_ohlcv(f'{coin}-{os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY}',
@@ -176,8 +172,12 @@ kucoin = provision_kucoin_spot_connection()
 coins = kucoin.public_get_symbols()
 coins = list(map(lambda it: it['symbol'],
                  filter(lambda it: it['quoteCurrency'] == st.session_state.base_coin, coins['data'])))
+params = st.experimental_get_query_params()
+default_idx = 0
+if 'symbol' in params:
+    default_idx = coins.index(params['symbol'][0])
 
-symbol = st.sidebar.selectbox(label=f'Select symbol: ({len(coins)})', options=coins)
+symbol = st.sidebar.selectbox(label=f'Select symbol: ({len(coins)})', options=coins, index=default_idx)
 factor = st.sidebar.slider(label="Pump max factor:", value=5, min_value=2, max_value=30)
 pump_volume = int(st.sidebar.text_input(f'Pump volume {st.session_state.base_coin}: ', value=150000))
 show_bid = st.sidebar.checkbox('Show bid', value=False)
@@ -253,7 +253,6 @@ if show_ask:
     fig2.update_xaxes(title_text='index')
     st.plotly_chart(fig2)
 
-    full_asks['csum_base_volume'] = full_asks.base_volume.cumsum()
     fig4 = px.line(data_frame=full_asks, x='factor', y='csum_base_volume', title='Base volume by factor')
     fig4.add_hline(y=pump_volume, line_color='red')
     st.plotly_chart(fig4)
