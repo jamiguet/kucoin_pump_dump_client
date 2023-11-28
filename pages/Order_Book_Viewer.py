@@ -24,6 +24,7 @@ def provision_kucoin_spot_connection(verbose=False):
     exchange.verbose = verbose
     return exchange
 
+
 @st.cache_data
 def fetch_candlesticks(_api, coin, time, minutes_before=10, minutes_after=10):
     """Method fetching the candlesticks around the time of the pump"""
@@ -135,15 +136,13 @@ class OrderBook:
 
         return result
 
-    def volume_distribution_by_factor(self, side=None):
+    def rank_peaks_base_volume(self, side=None):
         _book_df = self.to_df(side)
-        bins = [0.1, 0.2, 0.5, 1, 3, 5, 10, 100, 1000]
-        result = pd.DataFrame(columns=['up_to_factor', 'sum_base_volume'])
-
-        for cbin in bins:
-            value = _book_df[_book_df['factor'] < cbin]['base_volume'].sum()
-            result.loc[len(result)] = [cbin, value]
-
+        _book_df['volume_ranking'] = (_book_df['base_volume'] - _book_df['base_volume'].mean()) / _book_df[
+            'base_volume'].std()
+        result = _book_df.sort_values(by=['volume_ranking'], ascending=False).iloc[0:5][
+                         ['volume_ranking', 'factor', 'price', 'base_volume']]
+        result['symbol'] = self.symbol
         return result
 
     def pump_volume_factor(self, _pump_volume):
@@ -258,21 +257,30 @@ if show_ask:
     fig4.add_hline(y=pump_volume, line_color='red')
     st.plotly_chart(fig4)
 
+    fig5 = px.line(data_frame=full_asks, x='factor', y='base_volume', title='Order base volume by factor')
+    fig5.add_hline(y=full_asks['base_volume'].mean(), line_color='red')
+    fig5.add_hline(y=full_asks['base_volume'].mean() + 3 * full_asks['base_volume'].std(), line_color='yellow')
+    st.plotly_chart(fig5)
+
     st.text(f"Total volume at factor({factor}): {full_asks.base_volume.sum():,.2f} {st.session_state.base_coin}")
     st.text(f"Total volume at factor({factor}): {full_asks.volume.sum():,.2f} {symbol.split('-')[0]}")
     st.text(f"Factor at pump volume: {st.session_state.order_book.pump_volume_factor(pump_volume):.2f}")
 
+    st.text('Highest volume orders and price factor')
+    full_asks['volume_ranking'] = (full_asks['base_volume'] - full_asks['base_volume'].mean()) / full_asks[
+        'base_volume'].std()
+    st.dataframe(full_asks.sort_values(by=['volume_ranking'], ascending=False).iloc[0:5][
+                     ['volume_ranking', 'factor', 'price', 'base_volume']].set_index('volume_ranking'),
+                 use_container_width=True)
+
 if sac:
     st.text(f"Order book summary for all coins:")
-    summary = pd.DataFrame(columns=['coin', 'end_price', 'pump_volume_factor', 'pump_volume', 'last_price'])
+    summary = pd.DataFrame(columns=['volume_ranking', 'factor', 'price', 'base_volume', 'symbol'])
     bar_text = "Fetching order books"
     pro_bar = st.progress(0, text=bar_text)
     for idx, coi in enumerate(coins):
-        _order_book = OrderBook(symbol, kucoin)
-        summary.loc[len(summary)] = [coi, _order_book.pump_position_price(pump_volume),
-                                     _order_book.pump_volume_factor(pump_volume),
-                                     pump_volume,
-                                     _order_book.last_price]
+        _order_book = OrderBook(coi, kucoin)
+        summary = pd.concat([summary, _order_book.rank_peaks_base_volume(side='asks')], ignore_index=True)
         pro_bar.progress(idx / len(coins), f":blue[In progress {idx / len(coins):.2%}]")
         time.sleep(1)
 
