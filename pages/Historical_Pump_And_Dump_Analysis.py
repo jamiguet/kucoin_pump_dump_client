@@ -1,76 +1,27 @@
-import streamlit as st
 import os
-from dotenv import load_dotenv
-import pandas as pd
-import ccxt
-from ccxt.kucoin import BadSymbol
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+
 import numpy as np
-import pytz
+import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
+import streamlit as st
+from dotenv import load_dotenv
+from plotly.subplots import make_subplots
 
-
-@st.cache_resource
-def provision_kucoin_spot_connection(verbose=False):
-    exchange = ccxt.kucoin({
-        'adjustForTimeDifference': True,
-        "apiKey": os.getenv("API_KEY") or st.secrets.API_KEY,
-        "secret": os.getenv("API_SECRET") or st.secrets.API_SECRET,
-        'password': os.getenv("PASSWORD") or st.secrets.PASSWORD,
-    })
-    exchange.verbose = verbose
-    return exchange
+from exchange_tools import ExchangeConnector, OrderBook
 
 
 @st.cache_data
-def load_historical_file(file_name):
+def load_historical_file(file_name, _exchange=ExchangeConnector):
     pump_events = pd.read_csv(file_name)
     pump_events['Date'] = (pd.to_datetime(pump_events['Date'], format='[%Y-%m-%d %a  %H:%M]')
-                           .apply(to_utc))
+                           .apply(_exchange.to_utc))
     return pump_events
 
 
 @st.cache_data
-def fetch_candlesticks(_api, coin, time, minutes_before=10, minutes_after=10):
-    """Method fetching the candlesticks around the time of the pump"""
-
-    try:
-        since = int(time.values[0].astype('datetime64[s]').astype('int') - minutes_before * 60) * 1000
-        data = _api.fetch_ohlcv(f'{coin}-{os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY}',
-                                since=since,
-                                limit=minutes_before + minutes_after + 1)
-        data_pd = pd.DataFrame(data, columns=['unix', 'open', 'high', 'low', 'close', 'volume'])
-        data_pd['date'] = pd.to_datetime(data_pd['unix'].apply(lambda it: it / 1000),
-                                         unit='s')  # add a human readable date
-        return data_pd
-    except BadSymbol:
-        st.error(f"No Symbol {coin}-{st.session_state.base_coin}, Coin de-listed?")
-        return None
-
-
-@st.cache_data
-def fetch_history(_api, coin, time, days):
-    since = int(time.values[0].astype('datetime64[s]').astype('int') - days * 3600 * 24) * 1000
-    data = _api.fetch_ohlcv(f'{coin}-{st.session_state.base_coin}',
-                            timeframe='1d',
-                            since=since - 24 * 3600 * 1000,  # one day earlier so that dont have the pump in the stats
-                            limit=days)
-    data_pd = pd.DataFrame(data, columns=['unix', 'open', 'high', 'low', 'close', 'volume'])
-    data_pd['date'] = pd.to_datetime(data_pd['unix'].apply(lambda it: it / 1000),
-                                     unit='s')
-    data_pd['v_hour'] = data_pd['volume'] / 24
-    data_pd['v_minute'] = data_pd['volume'] / 24 / 60
-    return data_pd
-
-
-def to_utc(time, local=pytz.timezone("Europe/Paris")):
-    local_dt = local.localize(time, is_dst=None)
-    return local_dt.astimezone(pytz.utc)
-
-
-@st.cache_data
-def compute_pump(_api, coin, time, pre, post):
-    pump_data = fetch_candlesticks(_api, coin, time, pre, post)
+def compute_pump(_exchange, coin, time, pre, post):
+    pump_data = _exchange.fetch_candlesticks(coin, time, pre, post)
 
     if pump_data is not None:
         current = kucoin.fetch_ticker(symbol=f'{coin}-{os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY}')
@@ -95,9 +46,9 @@ def compute_pump(_api, coin, time, pre, post):
 load_dotenv()
 
 st.title("Historical Pump and Dump event analysis")
-
-kucoin = provision_kucoin_spot_connection()
-pumps_df = load_historical_file('./pumps.csv')
+exchange = ExchangeConnector('kucoin', os.getenv('BASE_CURRENCY'))
+kucoin = exchange.connect()
+pumps_df = load_historical_file('./pumps.csv', exchange)
 
 # st.dataframe(pumps_df, hide_index=True)
 
@@ -114,7 +65,7 @@ st.sidebar.markdown("---")
 st.session_state.base_coin = os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY
 pumped_amount = int(st.sidebar.text_input(f"Pumped amount ({st.session_state.base_coin}):", value=500))
 
-pump_data = fetch_candlesticks(kucoin, current_coin, pump_time, pre_minutes, post_minutes)
+pump_data = exchange.fetch_candlesticks(current_coin, pump_time, pre_minutes, post_minutes)
 
 if pump_data is not None:
     st.text(f"Pump on {current_coin} @ {np.datetime_as_string(pump_time.values[0])[:16]} UTC")
@@ -158,7 +109,7 @@ if pump_data is not None:
     st.text(f"Pump factor: {pump_agg.loc['max']['high'] / pump_agg.loc['min']['low'] - 1 :.2f}")
 
     st.text("Coin metrics")
-    hist_data = fetch_history(kucoin, current_coin, pump_time, hist_days)
+    hist_data = exchange.fetch_history(current_coin, pump_time, hist_days)
     hist_agg = hist_data.agg({
         "open": ['min', 'max', 'median'],
         "close": ['min', 'max', 'median'],
@@ -179,8 +130,17 @@ if pump_data is not None:
     vol_evol.add_trace(go.Bar(x=hist_data['date'], y=hist_data['v_minute'], name='Minute'), row=2, col=1)
     st.plotly_chart(vol_evol)
 
-summary = st.sidebar.checkbox('Display Summary', value=False)
+show_book = st.sidebar.checkbox(label="Display current Order book", value=False)
 
+if show_book:
+    max_factor = st.sidebar.slider(label="Max pump factor", value=5, min_value=2, max_value=100)
+    book = OrderBook(f"{current_coin}-{st.session_state.base_coin}", kucoin)
+    ask_df = book.to_df('asks')
+    fig = px.line(data_frame=ask_df[ask_df.factor <= max_factor], x='factor', y='csum_base_volume',
+                  title='Cumulated volume by factor', log_y=True, log_x=False)
+    st.plotly_chart(fig)
+
+summary = st.sidebar.checkbox('Display Summary', value=False)
 if summary:
     st.text("Pump summary")
     # coin, pump_factor, max_volume, pump_agg['min']['low']
@@ -188,7 +148,7 @@ if summary:
         columns=['pump', 'factor', 'max_volume', 'total_volume', 'start_price', 'max_volume_valued'])
     for coi in pumps_df['Coin']:
         pump_time = pumps_df[pumps_df['Coin'] == coi]['Date']
-        coin, factor, max_v, total_v, start_price, max_vol_val = compute_pump(kucoin, coi, pump_time, pre_minutes,
+        coin, factor, max_v, total_v, start_price, max_vol_val = compute_pump(exchange, coi, pump_time, pre_minutes,
                                                                               post_minutes)
         if coin:
             summary_df.loc[len(summary_df)] = [coin, factor, max_v, total_v, start_price, max_vol_val]

@@ -1,164 +1,26 @@
-import datetime
-import time
-from functools import reduce
-import streamlit as st
 import os
-from dotenv import load_dotenv
-import pandas as pd
+
 import ccxt
-from ccxt.kucoin import BadSymbol
-import plotly.graph_objects as go
-from plotly.subplots import make_subplots
+import pandas as pd
 import plotly.express as px
-import pytz
+import plotly.graph_objects as go
+import streamlit as st
+from dotenv import load_dotenv
+from plotly.subplots import make_subplots
+
+from exchange_tools import OrderBook
 
 
 @st.cache_resource
 def provision_kucoin_spot_connection(verbose=False):
     exchange = ccxt.kucoin({
         'adjustForTimeDifference': True,
-        "apiKey": os.getenv("API_KEY") or st.secrets.API_KEY,
-        "secret": os.getenv("API_SECRET") or st.secrets.API_SECRET,
+        "apiKey": os.getenv("KUCOIN_API_KEY") or st.secrets.KUCOIN_API_KEY,
+        "secret": os.getenv("KUCOIN_API_SECRET") or st.secrets.API_SECRET,
         'password': os.getenv("PASSWORD") or st.secrets.PASSWORD,
     })
     exchange.verbose = verbose
     return exchange
-
-
-@st.cache_data
-def fetch_candlesticks(_api, coin, time, minutes_before=10, minutes_after=10):
-    """Method fetching the candlesticks around the time of the pump"""
-    try:
-        since = int(time.values[0].astype('datetime64[s]').astype('int') - minutes_before * 60) * 1000
-        data = _api.fetch_ohlcv(f'{coin}-{os.getenv("BASE_CURRENCY") or st.secrets.BASE_CURRENCY}',
-                                since=since,
-                                limit=minutes_before + minutes_after + 1)
-        data_pd = pd.DataFrame(data, columns=['unix', 'open', 'high', 'low', 'close', 'volume'])
-        data_pd['date'] = pd.to_datetime(data_pd['unix'].apply(lambda it: it / 1000),
-                                         unit='s')  # add a human readable date
-        return data_pd
-    except BadSymbol:
-        st.error(f"No Symbol {coin}-{st.session_state.base_coin}, Coin de-listed?")
-        return None
-
-
-@st.cache_data
-def fetch_history(_api, coin, time, days):
-    since = int(time.values[0].astype('datetime64[s]').astype('int') - days * 3600 * 24) * 1000
-    data = _api.fetch_ohlcv(f'{coin}-{st.session_state.base_coin}',
-                            timeframe='1d',
-                            since=since - 24 * 3600 * 1000,  # one day earlier so that dont have the pump in the stats
-                            limit=days)
-    data_pd = pd.DataFrame(data, columns=['unix', 'open', 'high', 'low', 'close', 'volume'])
-    data_pd['date'] = pd.to_datetime(data_pd['unix'].apply(lambda it: it / 1000),
-                                     unit='s')
-    data_pd['v_hour'] = data_pd['volume'] / 24
-    data_pd['v_minute'] = data_pd['volume'] / 24 / 60
-    return data_pd
-
-
-def to_utc(time, local=pytz.timezone("Europe/Paris")):
-    local_dt = local.localize(time, is_dst=None)
-    return local_dt.astimezone(pytz.utc)
-
-
-class OrderBook:
-    PRICE = 0
-    QUANTITY = 1
-    data = None
-    symbol = None
-    api = None
-    last_price = None
-    min_price = None
-    max_price = None
-    min_factor = None
-    max_factor = None
-    min_volume = None
-    max_volume = None
-
-    def __init__(self, symbol, exchange):
-        self.symbol = symbol
-        self.api = exchange
-
-    def sort_side_by(self, side='asks', field=PRICE):
-        result = list()
-        if side == 'asks':
-            result = sorted(self.data[side], key=lambda it: it[field])
-        else:
-            result = sorted(self.data[side], key=lambda it: it[field], reverse=True)
-        return result
-
-    def fetch_data(self, force=False):
-
-        if self.data is None or force:
-            self.data = self.api.fetch_order_book(self.symbol)
-            sorted_asks = self.sort_side_by('asks', self.PRICE)
-
-            self.min_price = sorted_asks[0][self.PRICE]
-            self.max_price = sorted_asks[-1][self.PRICE]
-
-            self.min_volume = sorted_asks[0][self.QUANTITY]
-            self.max_volume = sorted_asks[-1][self.QUANTITY]
-
-            self.fetch_price()
-            self.min_factor = self.min_price / self.last_price
-            self.max_factor = self.max_price / self.last_price
-
-    def fetch_price(self, _force=False):
-        if self.last_price is None or _force:
-            self.last_price = self.api.fetch_ticker(symbol=self.symbol)['last']
-
-    def volume_at_factor(self, _factor):
-        self.fetch_data()
-        self.fetch_price()
-        thr = self.last_price * _factor
-        filtered = list(filter(lambda it: it[self.PRICE] > thr, self.data))
-        return reduce(lambda a, v: a + v, map(lambda it: it[self.QUANTITY], filtered), 0)
-
-    def to_df(self, _side=None):
-        self.fetch_data()
-        self.fetch_price()
-        result = pd.DataFrame(columns=['side', 'price', 'factor', 'volume', 'base_volume', 'csum_base_volume'])
-
-        for side in ('bids', 'asks'):
-            if _side is None or side == _side:
-                c_volume = 0
-                for item in self.sort_side_by(side, self.PRICE):
-                    _factor = item[self.PRICE] / self.last_price
-                    base_price = item[self.QUANTITY] * self.last_price
-                    c_volume += base_price
-                    result.loc[len(result)] = [side, item[self.PRICE],
-                                               _factor, item[self.QUANTITY],
-                                               base_price,
-                                               c_volume]
-            else:
-                continue
-
-        return result
-
-    def rank_peaks_base_volume(self, side=None):
-        _book_df = self.to_df(side)
-        _book_df['volume_ranking'] = (_book_df['base_volume'] - _book_df['base_volume'].mean()) / _book_df[
-            'base_volume'].std()
-        result = _book_df.sort_values(by=['volume_ranking'], ascending=False).iloc[0:5][
-                         ['volume_ranking', 'factor', 'price', 'base_volume']]
-        result['symbol'] = self.symbol
-        return result
-
-    def pump_volume_factor(self, _pump_volume):
-        self.fetch_data()
-        self.fetch_price()
-        _full_asks = self.to_df('asks')
-        result = _full_asks.iloc[_full_asks[_full_asks['csum_base_volume'] <= _pump_volume].index.max()]['factor']
-
-        return result
-
-    def pump_position_price(self, _pump_volume):
-        self.fetch_data()
-        self.fetch_price()
-        _full_bids = self.to_df('bids')
-        result = _full_bids.iloc[_full_bids[_full_bids['csum_base_volume'] <= pump_volume].index.max()]['price']
-        return result
 
 
 load_dotenv()
@@ -183,9 +45,6 @@ show_bid = st.sidebar.checkbox('Show bid', value=False)
 show_ask = st.sidebar.checkbox('Show ask', value=False)
 
 st.write(f'Coin Market: <a href="https://www.kucoin.com/trade/{symbol}">{symbol}</a>', unsafe_allow_html=True)
-
-st.sidebar.markdown('---')
-sac = st.sidebar.checkbox("Show all coins", value=False)
 
 ticker = kucoin.fetch_ticker(symbol=symbol)
 
@@ -272,18 +131,3 @@ if show_ask:
     st.dataframe(full_asks.sort_values(by=['volume_ranking'], ascending=False).iloc[0:5][
                      ['volume_ranking', 'factor', 'price', 'base_volume']].set_index('volume_ranking'),
                  use_container_width=True)
-
-if sac:
-    st.text(f"Order book summary for all coins:")
-    summary = pd.DataFrame(columns=['volume_ranking', 'factor', 'price', 'base_volume', 'symbol'])
-    bar_text = "Fetching order books"
-    pro_bar = st.progress(0, text=bar_text)
-    for idx, coi in enumerate(coins):
-        _order_book = OrderBook(coi, kucoin)
-        summary = pd.concat([summary, _order_book.rank_peaks_base_volume(side='asks')], ignore_index=True)
-        pro_bar.progress(idx / len(coins), f":blue[In progress {idx / len(coins):.2%}]")
-        time.sleep(1)
-
-    pro_bar.progress(1, ":green[Done]")
-    summary.to_csv(f"all_coins_{datetime.date.today().strftime('%Y-%m-%d')}", index=False)
-    st.dataframe(summary, use_container_width=True)

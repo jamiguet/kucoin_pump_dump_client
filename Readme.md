@@ -32,3 +32,5 @@ The position and price evolution are stored in a csv file.
 # WARNING: Use at your own risk!!
 The current behaviour is to use all your account funds in the configured
 Base currency, be sure to adjust the script or configure the API to use the correct account.
+
+Use the source, this readme is not up to date, but will be at one stage :)

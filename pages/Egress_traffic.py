@@ -1,5 +1,6 @@
-import streamlit as st
 import urllib.request
+
+import streamlit as st
 
 external_ip = urllib.request.urlopen('https://ident.me').read().decode('utf8')
 
