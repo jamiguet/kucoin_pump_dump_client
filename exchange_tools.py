@@ -197,7 +197,8 @@ class Position:
 class ExchangeConnector:
     exchange = None
     name = None
-    supported_exchanges = ['kucoin', 'kucoin_f', 'binance_f']
+    supported_exchanges = ['kucoin', 'kucoin_f', 'binance_f', 'bitstamp']
+    separator = {'kucoin': '-', 'kucoin_f': '-', 'binance_f': '/', 'bitstamp': '/'}
     base_currency = None
 
     def __init__(self, name, base_currency):
@@ -207,6 +208,9 @@ class ExchangeConnector:
         self.name = name
         self.base_currency = base_currency
 
+    def make_symbol(self, term_coin):
+        return f"{term_coin}{self.separator[self.name]}{self.base_currency}"
+
     def connect(self):
         if self.name == 'kucoin':
             return self.provision_kucoin_spot_connection()
@@ -214,6 +218,8 @@ class ExchangeConnector:
             return self.provision_kucoin_futures_connection()
         elif self.name == 'binance_f':
             return self.provision_binance_futures_connection()
+        elif self.name == 'bitstamp':
+            return self.provision_bitstamp_spot_connection()
         else:
             raise ValueError(f"Unsupported exchange {self.name}. Must be one of {self.supported_exchanges}")
 
@@ -245,6 +251,15 @@ class ExchangeConnector:
             'options': {
                 'defaultType': 'future',
             },
+        })
+        self.exchange.verbose = verbose
+        self.exchange.load_markets()
+        return self.exchange
+
+    def provision_bitstamp_spot_connection(self, verbose=False):
+        self.exchange = ccxt.bitstamp({
+            'apiKey': os.getenv('BITSTAMP_API_KEY'),
+            'secret': os.getenv('BITSTAMP_API_SECRET'),
         })
         self.exchange.verbose = verbose
         self.exchange.load_markets()
