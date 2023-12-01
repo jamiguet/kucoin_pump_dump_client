@@ -10,7 +10,7 @@ from exchange_tools import OrderBook, ExchangeConnector
 def init_script():
     load_dotenv()
     base_currency = os.getenv('BASE_CURRENCY')
-    _exchange = ExchangeConnector('binance_f', base_currency)
+    _exchange = ExchangeConnector('kucoin', base_currency)
 
     return base_currency, _exchange
 
@@ -27,9 +27,7 @@ if __name__ == '__main__':
         while True:
             order_book = OrderBook(symbol, exchange.connect())
             order_book_df = order_book.to_df('asks')
-            order_book_df['symbol'] = symbol
             order_book_df['sequence'] = seq
-            order_book_df['capture_timestamp'] = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
             order_book_df.to_csv(
                 os.path.join(symbol_dir,
                              f"ob_{seq:0>3}_{symbol_dir}-{datetime.now().strftime('%Y-%m-%d')}.csv"),

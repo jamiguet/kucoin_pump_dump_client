@@ -1,4 +1,8 @@
 .idea
 .env
 *.json
+.streamlit/secrets.toml
 /previous_pumps
+/*_kucoin
+/*_binance*
+/*_bitstamp

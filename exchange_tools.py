@@ -1,7 +1,7 @@
 import json
 import math
 import os
-from datetime import date
+from datetime import date, datetime
 from functools import reduce
 
 import ccxt
@@ -11,23 +11,24 @@ from ccxt import BadSymbol
 from colorama import Fore, Style
 
 
+# TODO integrate multi-exchange support across all features of the module
+
+
 class OrderBook:
     PRICE = 0
     QUANTITY = 1
-    data = None
-    symbol = None
-    api = None
-    last_price = None
-    min_price = None
-    max_price = None
-    min_factor = None
-    max_factor = None
-    min_volume = None
-    max_volume = None
 
     def __init__(self, symbol, exchange):
         self.symbol = symbol
         self.api = exchange
+        self.data = None
+        self.min_price = None
+        self.max_price = None
+        self.min_volume = None
+        self.max_volume = None
+        self.min_factor = None
+        self.max_factor = None
+        self.last_price = None
 
     def sort_side_by(self, side='asks', field=PRICE):
         result = list()
@@ -67,7 +68,8 @@ class OrderBook:
     def to_df(self, _side=None):
         self.fetch_data()
         self.fetch_price()
-        result = pd.DataFrame(columns=['side', 'price', 'factor', 'volume', 'base_volume', 'csum_base_volume'])
+        result = pd.DataFrame(
+            columns=['timestamp', 'symbol', 'side', 'price', 'factor', 'volume', 'base_volume', 'csum_base_volume'])
 
         for side in ('bids', 'asks'):
             if _side is None or side == _side:
@@ -76,10 +78,14 @@ class OrderBook:
                     _factor = item[self.PRICE] / self.last_price
                     base_price = item[self.QUANTITY] * self.last_price
                     c_volume += base_price
-                    result.loc[len(result)] = [side, item[self.PRICE],
-                                               _factor, item[self.QUANTITY],
-                                               base_price,
-                                               c_volume]
+                    result.loc[len(result)] = [
+                        datetime.now().astimezone(tz=pytz.timezone('Europe/Zurich')).strftime('%Y-%m-%dT%H:%M:%S%Z'),
+                        self.symbol,
+                        side,
+                        item[self.PRICE],
+                        _factor, item[self.QUANTITY],
+                        base_price,
+                        c_volume]
             else:
                 continue
 
@@ -89,8 +95,7 @@ class OrderBook:
         _book_df = self.to_df(side)
         _book_df['volume_ranking'] = (_book_df['base_volume'] - _book_df['base_volume'].mean()) / _book_df[
             'base_volume'].std()
-        result = _book_df.sort_values(by=['volume_ranking'], ascending=False).iloc[0:5][
-            ['volume_ranking', 'factor', 'price', 'base_volume']]
+        result = _book_df.sort_values(by=['volume_ranking'], ascending=False).iloc[0:5]
         result['symbol'] = self.symbol
         return result
 
@@ -195,11 +200,9 @@ class Position:
 
 
 class ExchangeConnector:
-    exchange = None
-    name = None
+
     supported_exchanges = ['kucoin', 'kucoin_f', 'binance_f', 'bitstamp']
     separator = {'kucoin': '-', 'kucoin_f': '-', 'binance_f': '/', 'bitstamp': '/'}
-    base_currency = None
 
     def __init__(self, name, base_currency):
         if name not in self.supported_exchanges:
@@ -207,6 +210,7 @@ class ExchangeConnector:
 
         self.name = name
         self.base_currency = base_currency
+        self.exchange = None
 
     def make_symbol(self, term_coin):
         return f"{term_coin}{self.separator[self.name]}{self.base_currency}"
