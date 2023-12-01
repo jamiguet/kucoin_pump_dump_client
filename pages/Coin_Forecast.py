@@ -15,20 +15,10 @@ def display_order_book(symbol, _api, pump_volume):
     order_book = OrderBook(symbol, _api)
     full_asks = order_book.to_df('asks')
     full_asks = full_asks[full_asks.price < int(factor[1]) * order_book.last_price]
-    fig = px.line(data_frame=full_asks,
-                  x='price',
-                  y=full_asks.base_volume.cumsum(),
-                  log_y=False, log_x=True,
-                  title=f"Ask volume by price n={len(full_asks)}",
-                  labels={'y': 'Cumulated base volume'})
-    palette = ['green', 'yellow', 'orange', 'red', 'blue']
-    for mult in range(1, factor[1]):
-        fig.add_vline(x=order_book.last_price * mult, line_color=palette[(mult - 1) % 5])
-    st.plotly_chart(fig)
 
     fig2 = make_subplots(specs=[[{"secondary_y": True}]])
     fig2.add_trace(go.Scatter(x=full_asks.index, y=full_asks.factor, name='factor'), secondary_y=True)
-    fig2.add_trace(go.Scatter(x=full_asks.index, y=full_asks.base_volume.cumsum(), name='base volume'),
+    fig2.add_trace(go.Scatter(x=full_asks.index, y=full_asks.csum_base_volume, name='base volume'),
                    secondary_y=False)
     fig2.add_vline(x=full_asks[full_asks.base_volume.cumsum() < pump_volume].index.max(), line_color='red')
     fig2.update_yaxes(
@@ -40,15 +30,6 @@ def display_order_book(symbol, _api, pump_volume):
     fig2.update_xaxes(title_text='index')
     st.plotly_chart(fig2)
 
-    fig4 = px.line(data_frame=full_asks, x='factor', y='csum_base_volume', title='Base volume by factor',
-                   hover_name='price')
-    fig4.add_hline(y=pump_volume, line_color='red')
-    st.plotly_chart(fig4)
-
-    fig5 = px.line(data_frame=full_asks, x='factor', y='base_volume', title='Order base volume by factor')
-    fig5.add_hline(y=full_asks['base_volume'].mean(), line_color='red')
-    fig5.add_hline(y=full_asks['base_volume'].mean() + 3 * full_asks['base_volume'].std(), line_color='yellow')
-    st.plotly_chart(fig5)
     st.markdown("---")
 
 
