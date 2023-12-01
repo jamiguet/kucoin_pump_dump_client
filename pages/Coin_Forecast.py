@@ -20,9 +20,10 @@ def display_order_book(symbol, _api, pump_volume):
     fig2.add_trace(go.Scatter(x=full_asks.index, y=full_asks.factor, name='factor'), secondary_y=True)
     fig2.add_trace(go.Scatter(x=full_asks.index, y=full_asks.csum_base_volume, name='base volume'),
                    secondary_y=False)
-    fig2.add_vline(x=full_asks[full_asks.base_volume.cumsum() < pump_volume].index.max(), line_color='red')
+    fig2.add_vline(x=full_asks[full_asks.base_volume.cumsum() < pump_volume[1]].index.max(), line_color='red')
+    fig2.add_vline(x=full_asks[full_asks.base_volume.cumsum() < pump_volume[0]].index.max(), line_color='green')
     fig2.update_yaxes(
-        title_text=f"Base volume {st.session_state.base_coin}",
+        title_text=f"Base volume {symbol}",
         secondary_y=False)
     fig2.update_yaxes(
         title_text="Factor",
@@ -55,4 +56,4 @@ st.dataframe(df, use_container_width=True)
 
 if st.sidebar.checkbox("Show graphs "):
     for coin in df['Symbol'].tolist():
-        display_order_book(coin, connector.connect(), volume[1])
+        display_order_book(coin, connector.connect(), volume)
