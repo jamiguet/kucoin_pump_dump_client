@@ -37,6 +37,12 @@ def display_order_book(symbol, _api, pump_volume):
 connector = ExchangeConnector('kucoin', st.secrets.BASE_CURRENCY)
 conn = st.connection("postgresql", type="sql")
 
+available_days = conn.query("""select date(timestamp) as "collection day"
+from ranked_orders.orders
+group by date(timestamp);""")['collection day'].tolist()
+
+current_day = st.sidebar.selectbox(label='Select collection day', options=available_days)
+
 factor = st.sidebar.slider(label='Factor range: ', min_value=1, max_value=10, value=(2, 5))
 volume = st.sidebar.slider(label='Volume range: ', min_value=10000, max_value=600000, value=(100000, 200000))
 # Perform query.
@@ -49,10 +55,12 @@ select symbol                as "Symbol",
 from ranked_orders.orders
 where factor between {factor[0]} and {factor[1]}
 and csum_base_volume between {volume[0]} and  {volume[1]}
+and date(timestamp) = date('{current_day}')
 group by symbol;
-""", ttl=10)
+""", ttl=0)
 
-st.dataframe(df, use_container_width=True)
+st.text(f"On {current_day} there where {len(df)} markets of interest:")
+st.dataframe(df.set_index('Symbol'), use_container_width=True)
 
 if st.sidebar.checkbox("Show graphs "):
     for coin in df['Symbol'].tolist():
