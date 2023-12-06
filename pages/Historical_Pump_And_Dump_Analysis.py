@@ -12,10 +12,12 @@ from exchange_tools import ExchangeConnector, OrderBook
 
 
 @st.cache_data
-def load_historical_file(file_name, _exchange=ExchangeConnector):
-    pump_events = pd.read_csv(file_name)
-    pump_events['Date'] = (pd.to_datetime(pump_events['Date'], format='[%Y-%m-%d %a  %H:%M]')
-                           .apply(_exchange.to_utc))
+def load_historical_data(_conn, _exchange=ExchangeConnector):
+    sql_str = "select * from pumps.pumps;"
+
+    pump_events = pd.read_sql(_conn,sql_str)
+    pump_events['Date'] = (pd.to_datetime(pump_events['Date'], format='%Y-%m-%d %H:%M:%S')
+                               .apply(_exchange.to_utc))
     return pump_events
 
 
@@ -48,7 +50,8 @@ load_dotenv()
 st.title("Historical Pump and Dump event analysis")
 exchange = ExchangeConnector('kucoin', os.getenv('BASE_CURRENCY'))
 kucoin = exchange.connect()
-pumps_df = load_historical_file('./pumps.csv', exchange)
+db =  st.connection("postgresql", type="sql")
+pumps_df = load_historical_data(db, exchange)
 
 # st.dataframe(pumps_df, hide_index=True)
 
