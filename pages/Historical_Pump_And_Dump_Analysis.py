@@ -15,7 +15,7 @@ from exchange_tools import ExchangeConnector, OrderBook
 def load_historical_data(_conn, _exchange=ExchangeConnector):
     sql_str = "select * from pumps.pumps;"
 
-    pump_events = pd.read_sql(_conn,sql_str)
+    pump_events = pd.read_sql(sql_str,_conn.connect())
     pump_events['Date'] = (pd.to_datetime(pump_events['Date'], format='%Y-%m-%d %H:%M:%S')
                                .apply(_exchange.to_utc))
     return pump_events
